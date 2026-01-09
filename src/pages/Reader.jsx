@@ -4,7 +4,7 @@ import ePub from 'epubjs';
 import { getBookFile } from '../services/bookStorage';
 import { useSettingsStore } from '../store/settingsStore';
 import { syncProgress, getProgress } from '../services/syncService';
-import { ArrowLeft, Settings, Menu, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Settings, ChevronLeft, ChevronRight, Menu, List } from 'lucide-react';
 import { useGesture } from '@use-gesture/react';
 import clsx from 'clsx';
 
@@ -20,9 +20,9 @@ const Reader = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [toc, setToc] = useState([]);
+    const [showToc, setShowToc] = useState(false);
     const [currentCfi, setCurrentCfi] = useState('');
     const [progress, setProgress] = useState(0); // 0-100 percentage
-    const [totalLocations, setTotalLocations] = useState(0);
 
     // Store
     const { theme, fontSize, fontFamily, setTheme, setFontSize, setFontFamily } = useSettingsStore();
@@ -34,18 +34,13 @@ const Reader = () => {
 
     useEffect(() => {
         loadBook();
-
         return () => {
-            if (bookRef.current) {
-                bookRef.current.destroy();
-            }
+            if (bookRef.current) bookRef.current.destroy();
         };
     }, [id]);
 
     useEffect(() => {
-        if (renditionRef.current) {
-            applyStyles();
-        }
+        if (renditionRef.current) applyStyles();
     }, [theme, fontSize, fontFamily]);
 
     const applyStyles = () => {
@@ -54,7 +49,7 @@ const Reader = () => {
 
         const themeColors = {
             light: { body: { color: '#000', background: '#fff' } },
-            dark: { body: { color: '#d1d5db', background: '#111827' } }, // slate-300, slate-900
+            dark: { body: { color: '#d1d5db', background: '#111827' } },
             sepia: { body: { color: '#5f4b32', background: '#f6e5cb' } },
         };
 
@@ -81,15 +76,12 @@ const Reader = () => {
                 height: '100%',
                 flow: 'paginated',
                 manager: 'default',
-                // spread: 'always' // force single page on mobile?
             });
             renditionRef.current = rendition;
 
-            // Load and apply styles
             await rendition.display();
             applyStyles();
 
-            // Get TOC
             const navigation = await book.loaded.navigation;
             setToc(navigation.toc);
 
@@ -97,7 +89,6 @@ const Reader = () => {
             rendition.on('relocated', (location) => {
                 const cfi = location.start.cfi;
                 const percentage = location.start.percentage;
-
                 setCurrentCfi(cfi);
                 setProgress(Math.floor(percentage * 100));
 
@@ -107,34 +98,20 @@ const Reader = () => {
                 }
             });
 
-            // Tap Zones Logic (Kindle-style)
+            // Tap Zones
             rendition.on('click', (e) => {
                 const width = window.innerWidth;
                 const x = e.clientX;
-
-                // Left 30% -> Prev
-                if (x < width * 0.3) {
-                    prevPage();
-                }
-                // Right 30% -> Next
-                else if (x > width * 0.7) {
-                    nextPage();
-                }
-                // Center -> Toggle Controls
-                else {
-                    toggleControls();
-                }
+                if (x < width * 0.3) prevPage();
+                else if (x > width * 0.7) nextPage();
+                else toggleControls();
             });
 
-            // Check for cloud progress
+            // Restore Progress
             const remoteData = await getProgress(id);
             if (remoteData && remoteData.last_read_cfi) {
-                // Determine if we should jump
                 rendition.display(remoteData.last_read_cfi);
             }
-
-            // rendition.on('selected', () => setShowControls(true));
-            // Note: Click handling is now covered by our custom click listener above for better zone control
 
             setLoading(false);
         } catch (err) {
@@ -147,7 +124,6 @@ const Reader = () => {
     const prevPage = () => renditionRef.current?.prev();
     const nextPage = () => renditionRef.current?.next();
 
-    // Gestures
     const bind = useGesture({
         onDragEnd: ({ movement: [mx], velocity: [vx] }) => {
             if (mx > 50 && vx > 0.2) prevPage();
@@ -165,123 +141,115 @@ const Reader = () => {
 
     return (
         <div className={clsx("relative w-full h-dvh overflow-hidden flex flex-col", bgClass)} {...bind()}>
-            {/* Top Bar */}
+            {/* Header Overlay */}
             <header className={clsx(
-                "absolute top-0 left-0 right-0 z-10 transition-transform duration-300 p-4 flex justify-between items-center bg-inherit/95 backdrop-blur shadow-sm",
+                "fixed top-0 left-0 right-0 z-50 transition-transform duration-300 p-4 flex justify-between items-center bg-white/95 dark:bg-gray-900/95 backdrop-blur shadow-sm",
                 showControls ? "translate-y-0" : "-translate-y-full"
             )}>
-                <button onClick={() => navigate('/library')} className={clsx("p-2 rounded-full hover:bg-black/5", textClass)}>
-                    <ArrowLeft size={24} />
-                </button>
-                <h2 className={clsx("font-semibold truncate max-w-[60%]", textClass)}>Reader</h2>
+                <div className="flex items-center gap-4">
+                    <button onClick={() => navigate('/library')} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
+                        <ArrowLeft size={24} />
+                    </button>
+                    <button onClick={() => setShowToc(!showToc)} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
+                        <List size={24} />
+                    </button>
+                </div>
+
+                <h2 className={clsx("font-semibold truncate max-w-[50%] text-sm", textClass)}>Reader</h2>
+
                 <div className="relative">
-                    <button
-                        onClick={() => setShowSettings(!showSettings)}
-                        className={clsx("p-2 rounded-full hover:bg-black/5", textClass)}
-                    >
+                    <button onClick={() => setShowSettings(!showSettings)} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
                         <Settings size={24} />
                     </button>
-
                     {/* Settings Dropdown */}
                     {showSettings && (
                         <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-50 text-gray-900 dark:text-gray-100">
-                            <h3 className="font-semibold mb-3 text-sm uppercasetracking-wider text-gray-500">Appearance</h3>
-
-                            {/* Theme */}
+                            <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Theme</h3>
                             <div className="flex gap-2 mb-4">
-                                <button onClick={() => setTheme('light')} className={clsx("flex-1 py-1 rounded border", theme === 'light' ? "border-indigo-500 ring-1 ring-indigo-500" : "border-gray-300 dark:border-gray-600")}>Light</button>
-                                <button onClick={() => setTheme('sepia')} className={clsx("flex-1 py-1 rounded border bg-[#f6e5cb] text-[#5f4b32]", theme === 'sepia' ? "border-indigo-500 ring-1 ring-indigo-500" : "border-gray-300 dark:border-gray-600")}>Sepia</button>
-                                <button onClick={() => setTheme('dark')} className={clsx("flex-1 py-1 rounded border bg-gray-900 text-gray-100", theme === 'dark' ? "border-indigo-500 ring-1 ring-indigo-500" : "border-gray-300 dark:border-gray-600")}>Dark</button>
+                                <button onClick={() => setTheme('light')} className={clsx("flex-1 py-1 rounded border", theme === 'light' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Light</button>
+                                <button onClick={() => setTheme('sepia')} className={clsx("flex-1 py-1 rounded border bg-[#f6e5cb] text-[#5f4b32]", theme === 'sepia' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Sepia</button>
+                                <button onClick={() => setTheme('dark')} className={clsx("flex-1 py-1 rounded border bg-gray-900 text-gray-100", theme === 'dark' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Dark</button>
                             </div>
-
-                            {/* Font Size */}
-                            <div className="mb-4">
-                                <label className="text-xs mb-1 block">Font Size: {fontSize}%</label>
-                                <div className="flex items-center gap-2">
-                                    <button onClick={() => setFontSize(Math.max(50, fontSize - 10))} className="p-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200">A-</button>
-                                    <input
-                                        type="range" min="50" max="200" step="10"
-                                        value={fontSize}
-                                        onChange={(e) => setFontSize(Number(e.target.value))}
-                                        className="flex-1"
-                                    />
-                                    <button onClick={() => setFontSize(Math.min(300, fontSize + 10))} className="p-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200">A+</button>
-                                </div>
+                            <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Typography</h3>
+                            <div className="mb-4 flex items-center gap-2">
+                                <button onClick={() => setFontSize(Math.max(50, fontSize - 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A-</button>
+                                <span className="flex-1 text-center text-sm">{fontSize}%</span>
+                                <button onClick={() => setFontSize(Math.min(300, fontSize + 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A+</button>
                             </div>
-
-                            {/* Font Family */}
-                            <div>
-                                <label className="text-xs mb-1 block">Font Family</label>
-                                <select
-                                    value={fontFamily}
-                                    onChange={(e) => setFontFamily(e.target.value)}
-                                    className="w-full p-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent"
-                                >
-                                    <option value="Inter">Inter (Sans)</option>
-                                    <option value="Times New Roman">Times New Roman (Serif)</option>
-                                    <option value="Georgia">Georgia</option>
-                                    <option value="Arial">Arial</option>
-                                </select>
-                            </div>
+                            <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value)} className="w-full p-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent">
+                                <option value="Georgia">Georgia (Serif)</option>
+                                <option value="Times New Roman">Times New Roman</option>
+                                <option value="Inter">Inter (Sans)</option>
+                                <option value="Arial">Arial</option>
+                            </select>
                         </div>
                     )}
                 </div>
             </header>
 
-            {/* Viewer Area */}
-            <div
-                className="flex-1 w-full h-full z-0 px-2 sm:px-10 py-12 sm:py-6"
-                ref={viewerRef}
-            // onClick handled by rendition event
-            />
-
-            {/* Loading Overlay */}
-            {loading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white z-50">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+            {/* TOC Drawer */}
+            {showToc && (
+                <div className="fixed inset-0 z-50 flex">
+                    <div className="absolute inset-0 bg-black/50" onClick={() => setShowToc(false)} />
+                    <div className="relative w-3/4 max-w-xs bg-white dark:bg-gray-800 h-full overflow-y-auto p-4 shadow-xl">
+                        <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">Table of Contents</h3>
+                        <div className="space-y-2">
+                            {toc.map((item, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => { renditionRef.current.display(item.href); setShowToc(false); }}
+                                    className="block w-full text-left p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-sm text-gray-700 dark:text-gray-300 truncate"
+                                >
+                                    {item.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             )}
 
-            {/* Bottom Controls */}
+            {/* Viewer */}
+            <div className="flex-1 w-full h-full z-0 px-2 sm:px-8 py-10" ref={viewerRef} />
+
+            {/* Footer Overlay */}
             <footer className={clsx(
-                "fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 flex flex-col bg-white dark:bg-gray-900 shadow-[0_-1px_10px_rgba(0,0,0,0.1)] pb-4",
+                "fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 flex flex-col bg-white/95 dark:bg-gray-900/95 backdrop-blur shadow-[0_-1px_10px_rgba(0,0,0,0.1)] pb-4",
                 showControls ? "translate-y-0" : "translate-y-full"
             )}>
-                {/* Progress Bar (Scrubber) */}
                 <div className="px-6 pt-4 pb-2">
                     <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={progress}
+                        type="range" min="0" max="100" value={progress}
                         onChange={(e) => {
                             const val = e.target.value;
                             setProgress(val);
-                            // Debounce jump? For now jump on change
-                            // Need locations generated for accurate jump usually, but percentage works approx
-                            const cfi = bookRef.current.locations.cfiFromPercentage(val / 100);
-                            renditionRef.current.display(cfi);
+                            if (bookRef.current) {
+                                const cfi = bookRef.current.locations.cfiFromPercentage(val / 100);
+                                renditionRef.current.display(cfi);
+                            }
                         }}
                         className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-indigo-600"
                     />
                     <div className="flex justify-between text-xs text-gray-500 mt-1 px-1">
                         <span>0%</span>
-                        <span>{progress}% Read</span>
-                        <span>100%</span>
+                        <span>{progress}%</span>
                     </div>
                 </div>
 
                 <div className={clsx("flex justify-between items-center px-6 py-2", textClass)}>
                     <button onClick={prevPage} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><ChevronLeft size={28} /></button>
-
                     <button onClick={() => setShowSettings(!showSettings)} className="flex flex-col items-center gap-1 group">
                         <span className="font-serif text-lg leading-none">Aa</span>
-                        <span className="text-[10px] uppercase font-bold text-gray-400 group-hover:text-indigo-500">Appearance</span>
+                        <span className="text-[10px] uppercase font-bold text-gray-400 group-hover:text-indigo-500">Text</span>
                     </button>
-
                     <button onClick={nextPage} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><ChevronRight size={28} /></button>
                 </div>
             </footer>
+
+            {loading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white z-50">
+                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+                </div>
+            )}
         </div>
     );
 };
