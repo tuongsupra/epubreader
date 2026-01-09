@@ -16,13 +16,15 @@ const Reader = () => {
     const renditionRef = useRef(null);
 
     // UI State
-    const [showControls, setShowControls] = useState(true);
+    // UI State
+    const [showControls, setShowControls] = useState(false); // Default hidden for immersion
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [toc, setToc] = useState([]);
     const [showToc, setShowToc] = useState(false);
     const [currentCfi, setCurrentCfi] = useState('');
     const [progress, setProgress] = useState(0); // 0-100 percentage
+    const [isLocationsReady, setIsLocationsReady] = useState(false);
 
     // Store
     const { theme, fontSize, fontFamily, setTheme, setFontSize, setFontFamily } = useSettingsStore();
@@ -79,22 +81,55 @@ const Reader = () => {
             });
             renditionRef.current = rendition;
 
-            await rendition.display();
-            applyStyles();
+            // 1. Restore Progress / Initial Display
+            // Fetch remote progress first to avoid jumping
+            const remoteData = await getProgress(id);
+            const targetCfi = remoteData?.last_read_cfi || undefined;
 
+            await rendition.display(targetCfi);
+            applyStyles();
+            setLoading(false); // Valid to show book now
+
+            // 2. Load TOC
             const navigation = await book.loaded.navigation;
             setToc(navigation.toc);
+
+            // 3. Generate Locations (Bg process for Sync/Scrubber)
+            // This allows percentage calculation
+            book.ready.then(() => {
+                // Generate locations for 1000 characters per "page" approx
+                return book.locations.generate(1000);
+            }).then(() => {
+                setIsLocationsReady(true);
+                // Update progress initial value after locations are ready
+                const currentLoc = rendition.currentLocation();
+                if (currentLoc && currentLoc.start) {
+                    const pct = book.locations.percentageFromCfi(currentLoc.start.cfi);
+                    setProgress(Math.floor(pct * 100));
+                }
+            });
 
             // Listeners
             rendition.on('relocated', (location) => {
                 const cfi = location.start.cfi;
-                const percentage = location.start.percentage;
                 setCurrentCfi(cfi);
-                setProgress(Math.floor(percentage * 100));
 
-                if (bookRef.current && bookRef.current.package) {
-                    const title = bookRef.current.package.metadata.title;
-                    syncProgress(id, title, cfi, percentage);
+                // Only calc percentage if locations ready, otherwise wait
+                if (bookRef.current.locations.length() > 0) {
+                    const percentage = bookRef.current.locations.percentageFromCfi(cfi);
+                    setProgress(Math.floor(percentage * 100));
+
+                    // Sync to cloud
+                    if (bookRef.current.package) {
+                        const title = bookRef.current.package.metadata.title;
+                        syncProgress(id, title, cfi, percentage);
+                    }
+                } else {
+                    // Fallback sync without percentage or simple percentage
+                    if (bookRef.current.package) {
+                        const title = bookRef.current.package.metadata.title;
+                        syncProgress(id, title, cfi, 0);
+                    }
                 }
             });
 
@@ -107,13 +142,6 @@ const Reader = () => {
                 else toggleControls();
             });
 
-            // Restore Progress
-            const remoteData = await getProgress(id);
-            if (remoteData && remoteData.last_read_cfi) {
-                rendition.display(remoteData.last_read_cfi);
-            }
-
-            setLoading(false);
         } catch (err) {
             console.error(err);
             setError(err.message);
@@ -219,19 +247,20 @@ const Reader = () => {
                 <div className="px-6 pt-4 pb-2">
                     <input
                         type="range" min="0" max="100" value={progress}
+                        disabled={!isLocationsReady}
                         onChange={(e) => {
                             const val = e.target.value;
                             setProgress(val);
-                            if (bookRef.current) {
+                            if (bookRef.current && isLocationsReady) {
                                 const cfi = bookRef.current.locations.cfiFromPercentage(val / 100);
                                 renditionRef.current.display(cfi);
                             }
                         }}
-                        className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-indigo-600"
+                        className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-indigo-600 disabled:opacity-50"
                     />
                     <div className="flex justify-between text-xs text-gray-500 mt-1 px-1">
                         <span>0%</span>
-                        <span>{progress}%</span>
+                        <span>{isLocationsReady ? `${progress}%` : 'Loading...'}</span>
                     </div>
                 </div>
 
