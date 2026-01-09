@@ -65,8 +65,8 @@ export const addBook = async (file) => {
     await bookStore.setItem(id, file); // Store format: ID -> Blob
     await metadataStore.setItem(id, bookData); // Store format: ID -> Metadata
 
-    // Sync to Supabase (only metadata/structure, not file)
-    // We'll process this in background or ignore for now
+    // Upload to Cloud (Fire and forget, or handle status)
+    uploadBookToCloud(id, file).catch(err => console.error("Cloud upload failed:", err));
 
     return bookData;
 };
@@ -74,4 +74,91 @@ export const addBook = async (file) => {
 export const deleteBook = async (id) => {
     await bookStore.removeItem(id);
     await metadataStore.removeItem(id);
+};
+
+// --- Cloud Sync Helpers ---
+
+export const uploadBookToCloud = async (bookId, file) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // Use bookId (hash) as filename
+    const path = `${user.id}/${bookId}.epub`;
+    const { error } = await supabase.storage
+        .from('books')
+        .upload(path, file, { upsert: true });
+
+    if (error) throw error;
+    console.log("Book uploaded to cloud:", path);
+};
+
+export const downloadBookFromCloud = async (bookId) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not logged in");
+
+    const path = `${user.id}/${bookId}.epub`;
+    const { data, error } = await supabase.storage
+        .from('books')
+        .download(path);
+
+    if (error) throw error;
+    return data; // Blob
+};
+
+export const syncLibrary = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    // 1. Fetch remote book list from DB (user_books table)
+    const { data: remoteBooks, error } = await supabase
+        .from('user_books')
+        .select('*')
+        .eq('user_id', user.id);
+
+    if (error) {
+        console.error("Error fetching remote library:", error);
+        return [];
+    }
+
+    // 2. Fetch local keys
+    const localKeys = await metadataStore.keys();
+
+    const mergedLibrary = [];
+    const localSet = new Set(localKeys);
+
+    // Process remote books
+    for (const rBook of remoteBooks) {
+        const id = rBook.book_hash;
+
+        if (localSet.has(id)) {
+            // Book exists locally, get local metadata
+            const localMeta = await metadataStore.getItem(id);
+            if (localMeta) {
+                mergedLibrary.push({ ...localMeta, isCloud: false });
+            }
+            localSet.delete(id);
+        } else {
+            // Book is cloud only
+            mergedLibrary.push({
+                id: id,
+                title: rBook.title || "Unknown Cloud Book",
+                author: "Cloud Synced",
+                cover: null,
+                isCloud: true,
+                percentage: rBook.percentage || 0
+            });
+        }
+    }
+
+    // Remaining local items
+    for (const id of localSet) {
+        const localMeta = await metadataStore.getItem(id);
+        if (localMeta) {
+            mergedLibrary.push({ ...localMeta, isCloud: false });
+        }
+    }
+
+    // Sort
+    mergedLibrary.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    return mergedLibrary;
 };
