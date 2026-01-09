@@ -17,22 +17,23 @@ const Reader = () => {
 
     // UI State
     const [showControls, setShowControls] = useState(false);
-    const showControlsRef = useRef(false); // Ref to access state inside implementation closures
+    const showControlsRef = useRef(false);
+    const lastClickRef = useRef(0); // For double tap detection
 
-    // Sync ref
     useEffect(() => { showControlsRef.current = showControls; }, [showControls]);
+
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [toc, setToc] = useState([]);
     const [showToc, setShowToc] = useState(false);
     const [currentCfi, setCurrentCfi] = useState('');
-    const [progress, setProgress] = useState(0); // 0-100 percentage
+    const [progress, setProgress] = useState(0);
     const [isLocationsReady, setIsLocationsReady] = useState(false);
+    const [chapterTitle, setChapterTitle] = useState('');
 
     // Store
     const { theme, fontSize, fontFamily, setTheme, setFontSize, setFontFamily } = useSettingsStore();
 
-    // Default font to Georgia if not set
     useEffect(() => {
         if (!fontFamily) setFontFamily('Georgia');
     }, []);
@@ -56,7 +57,7 @@ const Reader = () => {
             light: { body: { color: '#000', background: '#fff' } },
             dark: { body: { color: '#d1d5db', background: '#111827' } },
             sepia: { body: { color: '#5f4b32', background: '#f6e5cb' } },
-            'eye-care': { body: { color: '#333', background: '#cce8cf' } }, // Greenish eye protection
+            'eye-care': { body: { color: '#333', background: '#cce8cf' } },
         };
 
         rendition.themes.register('light', themeColors.light);
@@ -83,32 +84,28 @@ const Reader = () => {
                 height: '100%',
                 flow: 'paginated',
                 manager: 'default',
-                spread: 'none', // Force single page
-                minSpreadWidth: 10000 // Ensure it never thinks it's wide enough for spread
+                spread: 'none',
+                minSpreadWidth: 10000
             });
             renditionRef.current = rendition;
 
-            // 1. Restore Progress / Initial Display
-            // Fetch remote progress first to avoid jumping
+            // Restore Progress
             const remoteData = await getProgress(id);
             const targetCfi = remoteData?.last_read_cfi || undefined;
 
             await rendition.display(targetCfi);
             applyStyles();
-            setLoading(false); // Valid to show book now
+            setLoading(false);
 
-            // 2. Load TOC
+            // Load TOC
             const navigation = await book.loaded.navigation;
             setToc(navigation.toc);
 
-            // 3. Generate Locations (Bg process for Sync/Scrubber)
-            // This allows percentage calculation
+            // Generate Locations
             book.ready.then(() => {
-                // Generate locations for 1000 characters per "page" approx
                 return book.locations.generate(1000);
             }).then(() => {
                 setIsLocationsReady(true);
-                // Update progress initial value after locations are ready
                 const currentLoc = rendition.currentLocation();
                 if (currentLoc && currentLoc.start) {
                     const pct = book.locations.percentageFromCfi(currentLoc.start.cfi);
@@ -121,18 +118,21 @@ const Reader = () => {
                 const cfi = location.start.cfi;
                 setCurrentCfi(cfi);
 
-                // Only calc percentage if locations ready, otherwise wait
+                // Update Chapter Title
+                // find chapter from toc
+                // simplest is looking up href
+                // A better way is using book.spine.get(cfi) label, but might be unreliable for custom epubs
+                // We'll try to match href with TOC
+
                 if (bookRef.current.locations.length() > 0) {
                     const percentage = bookRef.current.locations.percentageFromCfi(cfi);
                     setProgress(Math.floor(percentage * 100));
 
-                    // Sync to cloud
                     if (bookRef.current.package) {
                         const title = bookRef.current.package.metadata.title;
                         syncProgress(id, title, cfi, percentage);
                     }
                 } else {
-                    // Fallback sync without percentage or simple percentage
                     if (bookRef.current.package) {
                         const title = bookRef.current.package.metadata.title;
                         syncProgress(id, title, cfi, 0);
@@ -140,41 +140,76 @@ const Reader = () => {
                 }
             });
 
-            // Tap Zones Update
+            // Handle Interactions (Click/Tap & Swipe inside Rendition)
+            // Note: rendition events are reliable for content interaction
+            let touchStartX = 0;
+            let touchStartY = 0;
+
+            rendition.on('touchstart', (e) => {
+                touchStartX = e.changedTouches[0].clientX;
+                touchStartY = e.changedTouches[0].clientY;
+            });
+
+            rendition.on('touchend', (e) => {
+                const touchEndX = e.changedTouches[0].clientX;
+                const touchEndY = e.changedTouches[0].clientY;
+
+                const diffX = touchStartX - touchEndX;
+                const diffY = touchStartY - touchEndY;
+
+                // Detect Horizontal Swipe (threshold 50px)
+                if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
+                    if (diffX > 0) nextPage(); // Swipe Left -> Next
+                    else prevPage();           // Swipe Right -> Prev
+                    e.preventDefault();
+                    return;
+                }
+            });
+
             rendition.on('click', (e) => {
+                const now = Date.now();
+                const timeDiff = now - lastClickRef.current;
+
+                // Double Tap Detection (<300ms)
+                if (timeDiff < 300 && timeDiff > 0) {
+                    setShowControls(!showControlsRef.current);
+                    lastClickRef.current = 0; // reset
+                    return;
+                }
+                lastClickRef.current = now;
+
+                // Wait a bit to check if it's a single click (Nav) or double click
+                // But for responsiveness, we execute Nav immediately. 
+                // Double click will toggle controls which is fine.
+
                 const width = window.innerWidth;
                 const height = window.innerHeight;
                 const x = e.clientX;
                 const y = e.clientY;
 
-                // 1. If controls are open, ANY tap on content hides them
                 if (showControlsRef.current) {
-                    setShowControls(false);
+                    setShowControls(false); // Tap anywhere to hide if open
                     return;
                 }
 
-                // 2. Navigation Zones Priority
-                // Left 20% -> Prev
+                // Zones
+                // 1. Left 20% -> Prev
                 if (x < width * 0.2) {
                     prevPage();
                     return;
                 }
-
-                // Right 20% -> Next
+                // 2. Right 20% -> Next
                 if (x > width * 0.8) {
                     nextPage();
                     return;
                 }
-
-                // Bottom 30% -> Next (or ignore, but Next is safer for mobile thumb)
+                // 3. Bottom 30% -> Next
                 if (y > height * 0.7) {
                     nextPage();
                     return;
                 }
 
-                // 3. Center Remaining Area -> Toggle Controls
-                // (Top 70% of the Center 60% strip)
-                setShowControls(true);
+                // Center -> Do nothing (wait for potential double tap)
             });
 
         } catch (err) {
@@ -187,14 +222,14 @@ const Reader = () => {
     const prevPage = () => renditionRef.current?.prev();
     const nextPage = () => renditionRef.current?.next();
 
+    // Swipe handler for container (empty space outside iframe)
     const bind = useGesture({
         onDragEnd: ({ movement: [mx], velocity: [vx] }) => {
-            if (mx > 50 && vx > 0.2) prevPage();
-            if (mx < -50 && vx > 0.2) nextPage();
+            if (mx > 50 && vx > 0.1) prevPage();
+            if (mx < -50 && vx > 0.1) nextPage();
         }
     });
 
-    const toggleControls = () => setShowControls(!showControls);
     const [showSettings, setShowSettings] = useState(false);
 
     if (error) return <div className="p-10 text-center text-red-500">Error: {error}</div>;
@@ -278,7 +313,13 @@ const Reader = () => {
             )}
 
             {/* Viewer */}
-            <div className="flex-1 w-full h-full z-0 px-2 sm:px-8 py-10" ref={viewerRef} />
+            <div className="flex-1 w-full h-full z-0 px-2 sm:px-8 pt-10 pb-12" ref={viewerRef} />
+
+            {/* Persistent Footer Info */}
+            <div className={clsx("absolute bottom-0 left-0 right-0 h-6 px-4 flex justify-between items-center text-[10px] opacity-70 bg-transparent z-40 select-none pointer-events-none", textClass)}>
+                <span className="truncate max-w-[70%]">Book Reading...</span>
+                <span>{isLocationsReady ? `${progress}%` : '--%'}</span>
+            </div>
 
             {/* Footer Overlay */}
             <footer className={clsx(
@@ -299,10 +340,6 @@ const Reader = () => {
                         }}
                         className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-indigo-600 disabled:opacity-50"
                     />
-                    <div className="flex justify-between text-xs text-gray-500 mt-1 px-1">
-                        <span>0%</span>
-                        <span>{isLocationsReady ? `${progress}%` : 'Loading...'}</span>
-                    </div>
                 </div>
 
                 <div className={clsx("flex justify-between items-center px-6 py-2", textClass)}>
