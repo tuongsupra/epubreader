@@ -2,6 +2,7 @@
 import localforage from 'localforage';
 import ePub from 'epubjs';
 import { supabase } from '../lib/supabaseClient';
+import { generateBookHash } from '../utils/hash';
 
 const bookStore = localforage.createInstance({
     name: "epub-reader",
@@ -28,21 +29,24 @@ export const addBook = async (file) => {
     const book = ePub(buffer);
 
     // Parse metadata
-    const metadata = await book.loaded.metadata;
-    const coverUrl = await book.coverUrl();
-    // coverUrl is blob url, need to persist it? 
-    // Actually coverUrl() creates a blob url which is revoked.
-    // We need to extract the cover image file and store it or base64 it.
-
-    // For now simple approach: Just store metadata. 
-    // If we want cover, we need to extract it.
+    let metadata;
+    try {
+        await book.ready;
+        metadata = await book.loaded.metadata;
+    } catch (e) {
+        console.error("EpubJS Metadata Error:", e);
+        metadata = { title: file.name.replace('.epub', ''), creator: 'Unknown', description: '' };
+    }
 
     let coverData = null;
-    // Try to get cover image blob
-    const coverPath = await book.cover;
-    if (coverPath) {
-        const coverBuffer = await book.archive.createUrl(coverPath, { base64: true });
-        coverData = coverBuffer;
+    try {
+        const coverPath = await book.cover;
+        if (coverPath) {
+            const coverBuffer = await book.archive.createUrl(coverPath, { base64: true });
+            coverData = coverBuffer;
+        }
+    } catch (e) {
+        console.warn("Could not extract cover:", e);
     }
 
     // Determine unique ID based on metadata (Title + Author)

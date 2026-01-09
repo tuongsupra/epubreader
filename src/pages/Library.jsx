@@ -30,11 +30,26 @@ const Library = () => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
 
-        // Process each file (simple loop for now)
-        for (let i = 0; i < files.length; i++) {
-            await addBook(files[i]);
+        setLoading(true);
+        try {
+            // Process each file
+            for (let i = 0; i < files.length; i++) {
+                try {
+                    await addBook(files[i]);
+                } catch (err) {
+                    console.error("Failed to add book:", files[i].name, err);
+                    alert(`Failed to add book ${files[i].name}. Error: ${err.message}`);
+                }
+            }
+            await loadBooks();
+        } catch (error) {
+            console.error("General error adding books:", error);
+            alert("An error occurred while adding books.");
+        } finally {
+            setLoading(false);
+            // Reset input value to allow re-uploading same file if needed
+            e.target.value = '';
         }
-        await loadBooks();
     };
 
     const handleDelete = async (e, id) => {
