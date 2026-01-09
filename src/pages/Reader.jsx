@@ -83,6 +83,8 @@ const Reader = () => {
                 height: '100%',
                 flow: 'paginated',
                 manager: 'default',
+                spread: 'none', // Force single page
+                minSpreadWidth: 10000 // Ensure it never thinks it's wide enough for spread
             });
             renditionRef.current = rendition;
 
