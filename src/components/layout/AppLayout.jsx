@@ -28,7 +28,8 @@ const AppLayout = () => {
                 </nav>
 
                 <div className="border-t border-black/10 dark:border-white/10 pt-4">
-                    <NavCallback to="/profile" icon={User} label="Profile" />
+                    {/* Use Login link directly if no profile page yet */}
+                    <NavCallback to="/login" icon={User} label="Login / Sign Up" />
                 </div>
             </aside>
 

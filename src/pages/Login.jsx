@@ -31,8 +31,8 @@ const Login = () => {
                     <div className="bg-indigo-100 dark:bg-indigo-900/50 p-3 rounded-full w-fit mx-auto mb-4">
                         <Lock className="h-8 w-8 text-indigo-600 dark:text-indigo-400" />
                     </div>
-                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Welcome Back</h1>
-                    <p className="text-gray-500 mt-2">Sign in to sync your library across devices</p>
+                    <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Login / Sign Up</h1>
+                    <p className="text-gray-500 mt-2">Enter your email to sync library across devices</p>
                 </div>
 
                 <form onSubmit={handleLogin} className="space-y-6">

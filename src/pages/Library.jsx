@@ -6,6 +6,9 @@ import { useNavigate } from 'react-router-dom';
 const Library = () => {
     const [books, setBooks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [processing, setProcessing] = useState(false);
+    const [progress, setProgress] = useState(0); // 0-100
+    const [currentFile, setCurrentFile] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -30,24 +33,37 @@ const Library = () => {
         const files = e.target.files;
         if (!files || files.length === 0) return;
 
-        setLoading(true);
+        setProcessing(true);
+        const total = files.length;
+
         try {
             // Process each file
-            for (let i = 0; i < files.length; i++) {
+            for (let i = 0; i < total; i++) {
+                setCurrentFile(files[i].name);
+                // Start of file
+                setProgress(Math.round(((i) / total) * 100));
+
+                // Small explicit delay to show UI
+                await new Promise(resolve => setTimeout(resolve, 100));
+
                 try {
                     await addBook(files[i]);
                 } catch (err) {
                     console.error("Failed to add book:", files[i].name, err);
                     alert(`Failed to add book ${files[i].name}. Error: ${err.message}`);
                 }
+
+                // End of file
+                setProgress(Math.round(((i + 1) / total) * 100));
             }
             await loadBooks();
         } catch (error) {
             console.error("General error adding books:", error);
-            alert("An error occurred while adding books.");
+            alert("An error occurred while adding books. Check console.");
         } finally {
-            setLoading(false);
-            // Reset input value to allow re-uploading same file if needed
+            setProcessing(false);
+            setProgress(0);
+            setCurrentFile('');
             e.target.value = '';
         }
     };
@@ -76,6 +92,21 @@ const Library = () => {
                     />
                 </label>
             </header>
+
+            {/* Processing Overlay */}
+            {processing && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm">
+                    <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-2xl max-w-sm w-full mx-4">
+                        <h3 className="text-lg font-semibold mb-2 text-gray-900 dark:text-white">Importing Books...</h3>
+                        <p className="text-sm text-gray-500 mb-4 truncate">Processing: {currentFile}</p>
+
+                        <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mb-2">
+                            <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                        </div>
+                        <div className="text-right text-xs text-gray-500">{progress}%</div>
+                    </div>
+                </div>
+            )}
 
             {loading ? (
                 <div className="flex justify-center p-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div></div>
