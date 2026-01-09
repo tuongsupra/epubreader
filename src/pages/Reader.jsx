@@ -4,7 +4,7 @@ import ePub from 'epubjs';
 import { getBookFile } from '../services/bookStorage';
 import { useSettingsStore } from '../store/settingsStore';
 import { syncProgress, getProgress } from '../services/syncService';
-import { ArrowLeft, Settings, ChevronLeft, ChevronRight, Menu, List } from 'lucide-react';
+import { ArrowLeft, Settings, ChevronLeft, ChevronRight, Menu, List, Maximize, Minimize } from 'lucide-react';
 import { useGesture } from '@use-gesture/react';
 import clsx from 'clsx';
 
@@ -18,7 +18,7 @@ const Reader = () => {
     // UI State
     const [showControls, setShowControls] = useState(false);
     const showControlsRef = useRef(false);
-    const lastClickRef = useRef(0); // For double tap detection
+    const [isFullscreen, setIsFullscreen] = useState(false);
 
     useEffect(() => { showControlsRef.current = showControls; }, [showControls]);
 
@@ -26,10 +26,13 @@ const Reader = () => {
     const [error, setError] = useState(null);
     const [toc, setToc] = useState([]);
     const [showToc, setShowToc] = useState(false);
-    const [currentCfi, setCurrentCfi] = useState('');
-    const [progress, setProgress] = useState(0);
-    const [isLocationsReady, setIsLocationsReady] = useState(false);
+
+    // Metadata State
+    const [bookTitle, setBookTitle] = useState('');
     const [chapterTitle, setChapterTitle] = useState('');
+    const [progress, setProgress] = useState(0);
+    const [currentCfi, setCurrentCfi] = useState('');
+    const [isLocationsReady, setIsLocationsReady] = useState(false);
 
     // Store
     const { theme, fontSize, fontFamily, setTheme, setFontSize, setFontFamily } = useSettingsStore();
@@ -48,6 +51,19 @@ const Reader = () => {
     useEffect(() => {
         if (renditionRef.current) applyStyles();
     }, [theme, fontSize, fontFamily]);
+
+    // Handle Fullscreen
+    const toggleFullscreen = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen();
+            setIsFullscreen(true);
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+                setIsFullscreen(false);
+            }
+        }
+    };
 
     const applyStyles = () => {
         const rendition = renditionRef.current;
@@ -89,6 +105,11 @@ const Reader = () => {
             });
             renditionRef.current = rendition;
 
+            // Load Metadata
+            book.loaded.metadata.then((meta) => {
+                setBookTitle(meta.title);
+            });
+
             // Restore Progress
             const remoteData = await getProgress(id);
             const targetCfi = remoteData?.last_read_cfi || undefined;
@@ -103,113 +124,83 @@ const Reader = () => {
 
             // Generate Locations
             book.ready.then(() => {
+                // Generates CFI for every 1000 characters (approx 1 page)
                 return book.locations.generate(1000);
             }).then(() => {
                 setIsLocationsReady(true);
-                const currentLoc = rendition.currentLocation();
-                if (currentLoc && currentLoc.start) {
-                    const pct = book.locations.percentageFromCfi(currentLoc.start.cfi);
-                    setProgress(Math.floor(pct * 100));
-                }
+                updateProgress();
             });
+
+            // Helper to update progress & chapter title
+            const updateProgress = () => {
+                const currentLocation = rendition.currentLocation();
+                if (currentLocation && currentLocation.start) {
+                    const cfi = currentLocation.start.cfi;
+                    setCurrentCfi(cfi);
+
+                    // Update Percentage
+                    if (book.locations.length() > 0) {
+                        const pct = book.locations.percentageFromCfi(cfi);
+                        setProgress(Math.floor(pct * 100));
+
+                        // Sync
+                        if (book.package) {
+                            syncProgress(id, book.package.metadata.title, cfi, Math.floor(pct * 100));
+                        }
+                    }
+
+                    // Update Chapter Title
+                    // Try to find matching TOC item
+                    const href = currentLocation.start.href;
+                    // Simple search in TOC (needs flattening if nested, but simplistic for now)
+                    // We search for the item whose href is contained in current href
+                    // or whose href *is* the current href
+
+                    // Simple flatten for search
+                    const flatten = (list) => list.reduce(
+                        (a, b) => a.concat(b.subitems ? flatten(b.subitems).concat(b) : b), []
+                    );
+                    const flatToc = flatten(navigation.toc);
+
+                    const chapter = flatToc.find(item => href.indexOf(item.href.split('#')[0]) !== -1);
+                    if (chapter) setChapterTitle(chapter.label);
+                }
+            };
 
             // Listeners
             rendition.on('relocated', (location) => {
-                const cfi = location.start.cfi;
-                setCurrentCfi(cfi);
-
-                // Update Chapter Title
-                // find chapter from toc
-                // simplest is looking up href
-                // A better way is using book.spine.get(cfi) label, but might be unreliable for custom epubs
-                // We'll try to match href with TOC
-
-                if (bookRef.current.locations.length() > 0) {
-                    const percentage = bookRef.current.locations.percentageFromCfi(cfi);
-                    setProgress(Math.floor(percentage * 100));
-
-                    if (bookRef.current.package) {
-                        const title = bookRef.current.package.metadata.title;
-                        syncProgress(id, title, cfi, percentage);
-                    }
-                } else {
-                    if (bookRef.current.package) {
-                        const title = bookRef.current.package.metadata.title;
-                        syncProgress(id, title, cfi, 0);
-                    }
-                }
+                updateProgress();
             });
 
-            // Handle Interactions (Click/Tap & Swipe inside Rendition)
-            // Note: rendition events are reliable for content interaction
-            let touchStartX = 0;
-            let touchStartY = 0;
-
-            rendition.on('touchstart', (e) => {
-                touchStartX = e.changedTouches[0].clientX;
-                touchStartY = e.changedTouches[0].clientY;
-            });
-
-            rendition.on('touchend', (e) => {
-                const touchEndX = e.changedTouches[0].clientX;
-                const touchEndY = e.changedTouches[0].clientY;
-
-                const diffX = touchStartX - touchEndX;
-                const diffY = touchStartY - touchEndY;
-
-                // Detect Horizontal Swipe (threshold 50px)
-                if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
-                    if (diffX > 0) nextPage(); // Swipe Left -> Next
-                    else prevPage();           // Swipe Right -> Prev
-                    e.preventDefault();
-                    return;
-                }
-            });
-
+            // Click / Tap Handler
             rendition.on('click', (e) => {
-                const now = Date.now();
-                const timeDiff = now - lastClickRef.current;
-
-                // Double Tap Detection (<300ms)
-                if (timeDiff < 300 && timeDiff > 0) {
-                    setShowControls(!showControlsRef.current);
-                    lastClickRef.current = 0; // reset
-                    return;
-                }
-                lastClickRef.current = now;
-
-                // Wait a bit to check if it's a single click (Nav) or double click
-                // But for responsiveness, we execute Nav immediately. 
-                // Double click will toggle controls which is fine.
-
                 const width = window.innerWidth;
-                const height = window.innerHeight;
                 const x = e.clientX;
                 const y = e.clientY;
+                const height = window.innerHeight;
 
+                // If controls are open, tapping CONTENT hides them
                 if (showControlsRef.current) {
-                    setShowControls(false); // Tap anywhere to hide if open
+                    setShowControls(false);
                     return;
                 }
 
-                // Zones
-                // 1. Left 20% -> Prev
-                if (x < width * 0.2) {
-                    prevPage();
-                    return;
-                }
-                // 2. Right 20% -> Next
-                if (x > width * 0.8) {
-                    nextPage();
-                    return;
-                }
-                // 3. Bottom 30% -> Next
-                if (y > height * 0.7) {
-                    nextPage();
+                // Interaction Zones (Simple & Strict)
+                // Left 30% -> Prev
+                if (x < width * 0.3) {
+                    rendition.prev();
                     return;
                 }
 
-                // Center -> Do nothing (wait for potential double tap)
+                // Right 30% OR Bottom 20% -> Next
+                if (x > width * 0.7 || y > height * 0.8) {
+                    rendition.next();
+                    return;
+                }
+
+                // Center -> Toggle Controls
+                // If we are here, we are in the middle 40% width and top 80% height
+                setShowControls(true);
             });
 
         } catch (err) {
@@ -222,11 +213,17 @@ const Reader = () => {
     const prevPage = () => renditionRef.current?.prev();
     const nextPage = () => renditionRef.current?.next();
 
-    // Swipe handler for container (empty space outside iframe)
+    // Swipe handler (useGesture on container div)
     const bind = useGesture({
         onDragEnd: ({ movement: [mx], velocity: [vx] }) => {
-            if (mx > 50 && vx > 0.1) prevPage();
-            if (mx < -50 && vx > 0.1) nextPage();
+            // Swipe Right (Positive MX) -> Prev Page
+            if (mx > 50 && vx > 0.1) {
+                prevPage();
+            }
+            // Swipe Left (Negative MX) -> Next Page
+            if (mx < -50 && vx > 0.1) {
+                nextPage();
+            }
         }
     });
 
@@ -253,36 +250,41 @@ const Reader = () => {
                     </button>
                 </div>
 
-                <h2 className={clsx("font-semibold truncate max-w-[50%] text-sm", textClass)}>Reader</h2>
+                <h2 className={clsx("font-semibold truncate max-w-[50%] text-sm", textClass)}>{bookTitle || 'Reader'}</h2>
 
-                <div className="relative">
-                    <button onClick={() => setShowSettings(!showSettings)} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
-                        <Settings size={24} />
+                <div className="flex items-center gap-2">
+                    <button onClick={toggleFullscreen} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hidden sm:block", textClass)}>
+                        {isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
                     </button>
-                    {/* Settings Dropdown */}
-                    {showSettings && (
-                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-50 text-gray-900 dark:text-gray-100">
-                            <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Theme</h3>
-                            <div className="flex gap-2 mb-4">
-                                <button onClick={() => setTheme('light')} className={clsx("flex-1 py-1 rounded border", theme === 'light' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Light</button>
-                                <button onClick={() => setTheme('sepia')} className={clsx("flex-1 py-1 rounded border bg-[#f6e5cb] text-[#5f4b32]", theme === 'sepia' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Sepia</button>
-                                <button onClick={() => setTheme('dark')} className={clsx("flex-1 py-1 rounded border bg-gray-900 text-gray-100", theme === 'dark' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Dark</button>
-                                <button onClick={() => setTheme('eye-care')} className={clsx("flex-1 py-1 rounded border bg-[#cce8cf] text-[#333]", theme === 'eye-care' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Green</button>
+                    <div className="relative">
+                        <button onClick={() => setShowSettings(!showSettings)} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
+                            <Settings size={24} />
+                        </button>
+                        {/* Settings Dropdown */}
+                        {showSettings && (
+                            <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-50 text-gray-900 dark:text-gray-100">
+                                <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Theme</h3>
+                                <div className="flex gap-2 mb-4">
+                                    <button onClick={() => setTheme('light')} className={clsx("flex-1 py-1 rounded border", theme === 'light' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Light</button>
+                                    <button onClick={() => setTheme('sepia')} className={clsx("flex-1 py-1 rounded border bg-[#f6e5cb] text-[#5f4b32]", theme === 'sepia' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Sepia</button>
+                                    <button onClick={() => setTheme('dark')} className={clsx("flex-1 py-1 rounded border bg-gray-900 text-gray-100", theme === 'dark' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Dark</button>
+                                    <button onClick={() => setTheme('eye-care')} className={clsx("flex-1 py-1 rounded border bg-[#cce8cf] text-[#333]", theme === 'eye-care' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Green</button>
+                                </div>
+                                <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Typography</h3>
+                                <div className="mb-4 flex items-center gap-2">
+                                    <button onClick={() => setFontSize(Math.max(50, fontSize - 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A-</button>
+                                    <span className="flex-1 text-center text-sm">{fontSize}%</span>
+                                    <button onClick={() => setFontSize(Math.min(300, fontSize + 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A+</button>
+                                </div>
+                                <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value)} className="w-full p-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent">
+                                    <option value="Georgia">Georgia (Serif)</option>
+                                    <option value="Times New Roman">Times New Roman</option>
+                                    <option value="Inter">Inter (Sans)</option>
+                                    <option value="Arial">Arial</option>
+                                </select>
                             </div>
-                            <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Typography</h3>
-                            <div className="mb-4 flex items-center gap-2">
-                                <button onClick={() => setFontSize(Math.max(50, fontSize - 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A-</button>
-                                <span className="flex-1 text-center text-sm">{fontSize}%</span>
-                                <button onClick={() => setFontSize(Math.min(300, fontSize + 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A+</button>
-                            </div>
-                            <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value)} className="w-full p-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent">
-                                <option value="Georgia">Georgia (Serif)</option>
-                                <option value="Times New Roman">Times New Roman</option>
-                                <option value="Inter">Inter (Sans)</option>
-                                <option value="Arial">Arial</option>
-                            </select>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
             </header>
 
@@ -316,9 +318,9 @@ const Reader = () => {
             <div className="flex-1 w-full h-full z-0 px-2 sm:px-8 pt-10 pb-12" ref={viewerRef} />
 
             {/* Persistent Footer Info */}
-            <div className={clsx("absolute bottom-0 left-0 right-0 h-6 px-4 flex justify-between items-center text-[10px] opacity-70 bg-transparent z-40 select-none pointer-events-none", textClass)}>
-                <span className="truncate max-w-[70%]">Book Reading...</span>
-                <span>{isLocationsReady ? `${progress}%` : '--%'}</span>
+            <div className={clsx("absolute bottom-0 left-0 right-0 h-8 px-4 flex justify-between items-center text-[11px] opacity-60 bg-transparent z-40 select-none pointer-events-none font-medium", textClass)}>
+                <span className="truncate max-w-[70%]">{chapterTitle || bookTitle || 'Loading...'}</span>
+                <span>{isLocationsReady ? `${progress}%` : 'Calculating...'}</span>
             </div>
 
             {/* Footer Overlay */}
