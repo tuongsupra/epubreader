@@ -17,7 +17,11 @@ const Reader = () => {
 
     // UI State
     // UI State
-    const [showControls, setShowControls] = useState(false); // Default hidden for immersion
+    const [showControls, setShowControls] = useState(false);
+    const showControlsRef = useRef(false); // Ref to access state inside implementation closures
+
+    // Sync ref
+    useEffect(() => { showControlsRef.current = showControls; }, [showControls]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [toc, setToc] = useState([]);
@@ -137,9 +141,17 @@ const Reader = () => {
             rendition.on('click', (e) => {
                 const width = window.innerWidth;
                 const x = e.clientX;
+
+                // If controls are open, ANY tap on content should hide them
+                if (showControlsRef.current) {
+                    setShowControls(false);
+                    return;
+                }
+
+                // If controls are hidden, use zones
                 if (x < width * 0.3) prevPage();
                 else if (x > width * 0.7) nextPage();
-                else toggleControls();
+                else setShowControls(true);
             });
 
         } catch (err) {
