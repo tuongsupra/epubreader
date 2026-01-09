@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getBooks, addBook, deleteBook } from '../services/bookStorage';
-import { Plus, Trash2, BookOpen } from 'lucide-react';
+import { getBooks, addBook, deleteBook, syncLibrary, downloadBookFromCloud } from '../services/bookStorage';
+import { Plus, Trash2, BookOpen, Cloud, Download } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const Library = () => {
@@ -18,14 +18,66 @@ const Library = () => {
     const loadBooks = async () => {
         setLoading(true);
         try {
-            const data = await getBooks();
-            // Sort by addedAt desc
-            data.sort((a, b) => b.addedAt - a.addedAt);
-            setBooks(data);
+            // Try sync first, fall back to local if error/offline
+            try {
+                const data = await syncLibrary();
+                if (data.length > 0) {
+                    setBooks(data);
+                } else {
+                    // If sync returns empty but we have local? 
+                    // Actually syncLibrary returns merged. If empty means empty.
+                    // But if offline, syncLibrary might return empty array passed from remote error check?
+                    // Let's refine syncLibrary later to handle offline explicitly.
+                    // For now assume it works or returns local only.
+                    if (data.length === 0) {
+                        // Fallback check local just in case sync failed quietly
+                        const localOnly = await getBooks();
+                        setBooks(localOnly.sort((a, b) => b.addedAt - a.addedAt));
+                    } else {
+                        setBooks(data);
+                    }
+                }
+            } catch (e) {
+                console.warn("Sync failed, loading local:", e);
+                const data = await getBooks();
+                data.sort((a, b) => b.addedAt - a.addedAt);
+                setBooks(data);
+            }
         } catch (error) {
             console.error(error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDownload = async (e, book) => {
+        e.stopPropagation();
+        if (loading) return;
+
+        // Show loading state for this item? 
+        // For simplicity, global loading or alerts.
+        if (!confirm(`Download "${book.title}" from cloud?`)) return;
+
+        setProcessing(true);
+        setCurrentFile(book.title);
+
+        try {
+            const blob = await downloadBookFromCloud(book.id);
+            // Convert Blob to File object to reuse addBook
+            const file = new File([blob], `${book.title}.epub`, { type: "application/epub+zip" });
+
+            // Add book (this acts as "processing" logic too)
+            // Note: addBook uploads to cloud again by default in our logic? 
+            // We should optimization addBook to skip upload if it's already there?
+            // Or just let it upsert (doesn't hurt).
+            await addBook(file);
+
+            await loadBooks();
+        } catch (err) {
+            alert("Download failed: " + err.message);
+        } finally {
+            setProcessing(false);
+            setCurrentFile('');
         }
     };
 
@@ -121,18 +173,26 @@ const Library = () => {
                     {books.map(book => (
                         <div
                             key={book.id}
-                            onClick={() => navigate(`/read/${book.id}`)}
+                            onClick={(e) => book.isCloud ? handleDownload(e, book) : navigate(`/read/${book.id}`)}
                             className="group relative flex flex-col cursor-pointer bg-white dark:bg-gray-800 rounded-xl shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1 mx-auto w-full max-w-[200px]"
                         >
                             <div className="aspect-[2/3] w-full overflow-hidden rounded-t-xl bg-gray-200 dark:bg-gray-700 relative">
                                 {book.cover ? (
                                     <img src={book.cover} alt={book.title} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
                                 ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-gray-400">
-                                        <BookOpen size={40} />
+                                    <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 gap-2">
+                                        {book.isCloud ? <Cloud size={40} className="text-indigo-400" /> : <BookOpen size={40} />}
+                                        {book.isCloud && <span className="text-xs font-medium text-indigo-500">Cloud Only</span>}
                                     </div>
                                 )}
-                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
+
+                                {book.isCloud && (
+                                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Download className="text-white h-10 w-10" />
+                                    </div>
+                                )}
+
+                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
                             </div>
 
                             <div className="p-3">

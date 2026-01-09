@@ -90,13 +90,28 @@ const Reader = () => {
                 const cfi = location.start.cfi;
                 const percentage = location.start.percentage;
 
-                // Debounce logic could be added here, or assume relocating isn't too frequent (on page turn)
-                // Using a simple timeout/debounceRef suggested if high frequency
-                // For now, sync on every page turn is acceptable or simple debounce
-
                 if (bookRef.current && bookRef.current.package) {
                     const title = bookRef.current.package.metadata.title;
                     syncProgress(id, title, cfi, percentage);
+                }
+            });
+
+            // Tap Zones Logic (Kindle-style)
+            rendition.on('click', (e) => {
+                const width = window.innerWidth;
+                const x = e.clientX;
+
+                // Left 30% -> Prev
+                if (x < width * 0.3) {
+                    prevPage();
+                }
+                // Right 30% -> Next
+                else if (x > width * 0.7) {
+                    nextPage();
+                }
+                // Center -> Toggle Controls
+                else {
+                    toggleControls();
                 }
             });
 
@@ -104,14 +119,11 @@ const Reader = () => {
             const remoteData = await getProgress(id);
             if (remoteData && remoteData.last_read_cfi) {
                 // Determine if we should jump
-                // Ideally prompt user "Pick up where you left off?", but auto-jump is easier
                 rendition.display(remoteData.last_read_cfi);
             }
 
-            rendition.on('selected', () => setShowControls(true));
-            // Click to toggle controls
-            // rendition.on('click', () => setShowControls(prev => !prev)); 
-            // Note: EpubJS strict handling of click might block this. Use touch layer wrapper.
+            // rendition.on('selected', () => setShowControls(true));
+            // Note: Click handling is now covered by our custom click listener above for better zone control
 
             setLoading(false);
         } catch (err) {
@@ -209,7 +221,7 @@ const Reader = () => {
             <div
                 className="flex-1 w-full h-full z-0 px-2 sm:px-10 py-12 sm:py-6"
                 ref={viewerRef}
-                onClick={() => { setShowControls(!showControls); setShowSettings(false); }}
+            // onClick handled by rendition event
             />
 
             {/* Loading Overlay */}
