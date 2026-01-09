@@ -20,9 +20,17 @@ const Reader = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [toc, setToc] = useState([]);
+    const [currentCfi, setCurrentCfi] = useState('');
+    const [progress, setProgress] = useState(0); // 0-100 percentage
+    const [totalLocations, setTotalLocations] = useState(0);
 
     // Store
-    const { theme, fontSize, fontFamily, setTheme, setFontSize } = useSettingsStore();
+    const { theme, fontSize, fontFamily, setTheme, setFontSize, setFontFamily } = useSettingsStore();
+
+    // Default font to Georgia if not set
+    useEffect(() => {
+        if (!fontFamily) setFontFamily('Georgia');
+    }, []);
 
     useEffect(() => {
         loadBook();
@@ -89,6 +97,9 @@ const Reader = () => {
             rendition.on('relocated', (location) => {
                 const cfi = location.start.cfi;
                 const percentage = location.start.percentage;
+
+                setCurrentCfi(cfi);
+                setProgress(Math.floor(percentage * 100));
 
                 if (bookRef.current && bookRef.current.package) {
                     const title = bookRef.current.package.metadata.title;
@@ -233,14 +244,42 @@ const Reader = () => {
 
             {/* Bottom Controls */}
             <footer className={clsx(
-                "absolute bottom-0 left-0 right-0 z-10 transition-transform duration-300 p-4 flex justify-between items-center bg-inherit/95 backdrop-blur shadow-[0_-1px_3px_rgba(0,0,0,0.1)]",
+                "fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 flex flex-col bg-white dark:bg-gray-900 shadow-[0_-1px_10px_rgba(0,0,0,0.1)] pb-4",
                 showControls ? "translate-y-0" : "translate-y-full"
             )}>
-                <div className="flex gap-4 items-center w-full justify-center">
-                    <button onClick={prevPage} className={clsx("p-3 rounded-full hover:bg-black/5", textClass)}><ChevronLeft /></button>
-                    {/* Progress Slider could go here */}
-                    <span className={clsx("text-xs", textClass)}>Page 1 / 100</span>
-                    <button onClick={nextPage} className={clsx("p-3 rounded-full hover:bg-black/5", textClass)}><ChevronRight /></button>
+                {/* Progress Bar (Scrubber) */}
+                <div className="px-6 pt-4 pb-2">
+                    <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={progress}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            setProgress(val);
+                            // Debounce jump? For now jump on change
+                            // Need locations generated for accurate jump usually, but percentage works approx
+                            const cfi = bookRef.current.locations.cfiFromPercentage(val / 100);
+                            renditionRef.current.display(cfi);
+                        }}
+                        className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-indigo-600"
+                    />
+                    <div className="flex justify-between text-xs text-gray-500 mt-1 px-1">
+                        <span>0%</span>
+                        <span>{progress}% Read</span>
+                        <span>100%</span>
+                    </div>
+                </div>
+
+                <div className={clsx("flex justify-between items-center px-6 py-2", textClass)}>
+                    <button onClick={prevPage} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><ChevronLeft size={28} /></button>
+
+                    <button onClick={() => setShowSettings(!showSettings)} className="flex flex-col items-center gap-1 group">
+                        <span className="font-serif text-lg leading-none">Aa</span>
+                        <span className="text-[10px] uppercase font-bold text-gray-400 group-hover:text-indigo-500">Appearance</span>
+                    </button>
+
+                    <button onClick={nextPage} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><ChevronRight size={28} /></button>
                 </div>
             </footer>
         </div>

@@ -7,8 +7,10 @@ import Reader from './pages/Reader';
 import Login from './pages/Login';
 
 // Placeholder Pages
+import ProfilePage from './pages/ProfilePage';
+
+// Placeholder Pages
 const SettingsPage = () => <div className="p-8">Settings Page (Coming Soon)</div>;
-const ProfilePage = () => <div className="p-8">Profile Page (Coming Soon)</div>;
 
 const App = () => {
   return (
