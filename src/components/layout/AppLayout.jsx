@@ -7,8 +7,23 @@ import clsx from 'clsx';
 const AppLayout = () => {
     const { theme } = useSettingsStore();
 
-    // Apply theme class to a wrapper or body (useEffect in App.jsx preferred, but here works for scoped)
-    // Actually, better to handle theme globally.
+    // Auth State
+    const [user, setUser] = React.useState(null);
+
+    React.useEffect(() => {
+        // Get initial session
+        import('../../lib/supabaseClient').then(({ supabase }) => {
+            supabase.auth.getUser().then(({ data: { user } }) => {
+                setUser(user);
+            });
+
+            const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+                setUser(session?.user ?? null);
+            });
+
+            return () => subscription.unsubscribe();
+        });
+    }, []);
 
     return (
         <div className={clsx("flex h-dvh w-screen overflow-hidden transition-colors duration-300",
@@ -28,7 +43,11 @@ const AppLayout = () => {
                 </nav>
 
                 <div className="border-t border-black/10 dark:border-white/10 pt-4">
-                    <NavCallback to="/profile" icon={User} label="My Profile" />
+                    {user ? (
+                        <NavCallback to="/profile" icon={User} label="My Profile" />
+                    ) : (
+                        <NavCallback to="/login" icon={User} label="Login / Sign Up" />
+                    )}
                 </div>
             </aside>
 
@@ -41,7 +60,11 @@ const AppLayout = () => {
             <nav className="md:hidden flex items-center justify-around border-t border-black/10 dark:border-white/10 bg-inherit p-3 absolute bottom-0 w-full z-10">
                 <NavCallbackMobile to="/library" icon={Library} label="Library" />
                 <NavCallbackMobile to="/settings" icon={Settings} label="Settings" />
-                <NavCallbackMobile to="/profile" icon={User} label="Profile" />
+                {user ? (
+                    <NavCallbackMobile to="/profile" icon={User} label="Profile" />
+                ) : (
+                    <NavCallbackMobile to="/login" icon={User} label="Login" />
+                )}
             </nav>
         </div>
     );

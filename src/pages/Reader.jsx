@@ -16,7 +16,6 @@ const Reader = () => {
     const renditionRef = useRef(null);
 
     // UI State
-    // UI State
     const [showControls, setShowControls] = useState(false);
     const showControlsRef = useRef(false); // Ref to access state inside implementation closures
 
@@ -57,11 +56,13 @@ const Reader = () => {
             light: { body: { color: '#000', background: '#fff' } },
             dark: { body: { color: '#d1d5db', background: '#111827' } },
             sepia: { body: { color: '#5f4b32', background: '#f6e5cb' } },
+            'eye-care': { body: { color: '#333', background: '#cce8cf' } }, // Greenish eye protection
         };
 
         rendition.themes.register('light', themeColors.light);
         rendition.themes.register('dark', themeColors.dark);
         rendition.themes.register('sepia', themeColors.sepia);
+        rendition.themes.register('eye-care', themeColors['eye-care']);
 
         rendition.themes.select(theme);
         rendition.themes.fontSize(`${fontSize}%`);
@@ -137,21 +138,41 @@ const Reader = () => {
                 }
             });
 
-            // Tap Zones
+            // Tap Zones Update
             rendition.on('click', (e) => {
                 const width = window.innerWidth;
+                const height = window.innerHeight;
                 const x = e.clientX;
+                const y = e.clientY;
 
-                // If controls are open, ANY tap on content should hide them
+                // 1. If controls are open, ANY tap on content hides them
                 if (showControlsRef.current) {
                     setShowControls(false);
                     return;
                 }
 
-                // If controls are hidden, use zones
-                if (x < width * 0.3) prevPage();
-                else if (x > width * 0.7) nextPage();
-                else setShowControls(true);
+                // 2. Navigation Zones Priority
+                // Left 20% -> Prev
+                if (x < width * 0.2) {
+                    prevPage();
+                    return;
+                }
+
+                // Right 20% -> Next
+                if (x > width * 0.8) {
+                    nextPage();
+                    return;
+                }
+
+                // Bottom 30% -> Next (or ignore, but Next is safer for mobile thumb)
+                if (y > height * 0.7) {
+                    nextPage();
+                    return;
+                }
+
+                // 3. Center Remaining Area -> Toggle Controls
+                // (Top 70% of the Center 60% strip)
+                setShowControls(true);
             });
 
         } catch (err) {
@@ -176,8 +197,8 @@ const Reader = () => {
 
     if (error) return <div className="p-10 text-center text-red-500">Error: {error}</div>;
 
-    const bgClass = theme === 'dark' ? 'bg-slate-900' : theme === 'sepia' ? 'bg-[#F6E5CB]' : 'bg-white';
-    const textClass = theme === 'dark' ? 'text-gray-300' : theme === 'sepia' ? 'text-[#5F4B32]' : 'text-gray-800';
+    const bgClass = theme === 'dark' ? 'bg-slate-900' : theme === 'sepia' ? 'bg-[#F6E5CB]' : theme === 'eye-care' ? 'bg-[#cce8cf]' : 'bg-white';
+    const textClass = theme === 'dark' ? 'text-gray-300' : theme === 'sepia' ? 'text-[#5F4B32]' : theme === 'eye-care' ? 'text-[#333]' : 'text-gray-800';
 
     return (
         <div className={clsx("relative w-full h-dvh overflow-hidden flex flex-col", bgClass)} {...bind()}>
@@ -209,6 +230,7 @@ const Reader = () => {
                                 <button onClick={() => setTheme('light')} className={clsx("flex-1 py-1 rounded border", theme === 'light' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Light</button>
                                 <button onClick={() => setTheme('sepia')} className={clsx("flex-1 py-1 rounded border bg-[#f6e5cb] text-[#5f4b32]", theme === 'sepia' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Sepia</button>
                                 <button onClick={() => setTheme('dark')} className={clsx("flex-1 py-1 rounded border bg-gray-900 text-gray-100", theme === 'dark' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Dark</button>
+                                <button onClick={() => setTheme('eye-care')} className={clsx("flex-1 py-1 rounded border bg-[#cce8cf] text-[#333]", theme === 'eye-care' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Green</button>
                             </div>
                             <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Typography</h3>
                             <div className="mb-4 flex items-center gap-2">
@@ -234,15 +256,20 @@ const Reader = () => {
                     <div className="relative w-3/4 max-w-xs bg-white dark:bg-gray-800 h-full overflow-y-auto p-4 shadow-xl">
                         <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">Table of Contents</h3>
                         <div className="space-y-2">
-                            {toc.map((item, idx) => (
-                                <button
-                                    key={idx}
-                                    onClick={() => { renditionRef.current.display(item.href); setShowToc(false); }}
-                                    className="block w-full text-left p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-sm text-gray-700 dark:text-gray-300 truncate"
-                                >
-                                    {item.label}
-                                </button>
-                            ))}
+                            {toc.map((item, idx) => {
+                                const isActive = currentCfi && item.href && currentCfi.includes(item.href.split('#')[0]);
+                                return (
+                                    <button
+                                        key={idx}
+                                        onClick={() => { renditionRef.current.display(item.href); setShowToc(false); }}
+                                        className={clsx("block w-full text-left p-2 rounded text-sm truncate",
+                                            isActive ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-medium" : "hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+                                        )}
+                                    >
+                                        {item.label}
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
                 </div>
