@@ -4,12 +4,43 @@ import ePub from 'epubjs';
 import { getBookFile } from '../services/bookStorage';
 import { useSettingsStore } from '../store/settingsStore';
 import { syncProgress, getProgress } from '../services/syncService';
-import { ArrowLeft, Settings, ChevronLeft, ChevronRight, Menu, List, Maximize, Minimize } from 'lucide-react';
+import { ArrowLeft, Settings, ChevronLeft, ChevronRight, List, Maximize, Minimize, Type } from 'lucide-react';
 import { useGesture } from '@use-gesture/react';
 import clsx from 'clsx';
 
+// Kindle-inspired theme definitions
+const KINDLE_THEMES = {
+    light: {
+        body: { color: '#000000', background: '#FFFFFF' },
+        text: 'text-gray-900',
+        bg: 'bg-white',
+        controlBg: 'bg-white/98',
+        border: 'border-gray-200'
+    },
+    sepia: {
+        body: { color: '#5B4636', background: '#F4E8D8' },
+        text: 'text-[#5B4636]',
+        bg: 'bg-[#F4E8D8]',
+        controlBg: 'bg-[#F4E8D8]/98',
+        border: 'border-[#D4C8B8]'
+    },
+    dark: {
+        body: { color: '#CCCCCC', background: '#1A1A1A' },
+        text: 'text-gray-300',
+        bg: 'bg-[#1A1A1A]',
+        controlBg: 'bg-[#1A1A1A]/98',
+        border: 'border-gray-700'
+    },
+    'eye-care': {
+        body: { color: '#1F2937', background: '#E0F0E3' },
+        text: 'text-gray-800',
+        bg: 'bg-[#E0F0E3]',
+        controlBg: 'bg-[#E0F0E3]/98',
+        border: 'border-[#C0D0C3]'
+    },
+};
+
 const Reader = () => {
-    // Force Re-deploy Timestamp: 2026-01-09
     const { id } = useParams();
     const navigate = useNavigate();
     const viewerRef = useRef(null);
@@ -36,10 +67,12 @@ const Reader = () => {
     const [isLocationsReady, setIsLocationsReady] = useState(false);
 
     // Store
-    const { theme, fontSize, fontFamily, setTheme, setFontSize, setFontFamily } = useSettingsStore();
+    const { theme, fontSize, fontFamily, lineHeight, margins, setTheme, setFontSize, setFontFamily, setLineHeight, setMargins } = useSettingsStore();
 
     useEffect(() => {
         if (!fontFamily) setFontFamily('Georgia');
+        if (!lineHeight) setLineHeight(1.6);
+        if (!margins) setMargins('medium');
     }, []);
 
     useEffect(() => {
@@ -51,7 +84,7 @@ const Reader = () => {
 
     useEffect(() => {
         if (renditionRef.current) applyStyles();
-    }, [theme, fontSize, fontFamily]);
+    }, [theme, fontSize, fontFamily, lineHeight, margins]);
 
     // Handle Fullscreen
     const toggleFullscreen = () => {
@@ -70,21 +103,19 @@ const Reader = () => {
         const rendition = renditionRef.current;
         if (!rendition) return;
 
-        const themeColors = {
-            light: { body: { color: '#000', background: '#fff' } },
-            dark: { body: { color: '#d1d5db', background: '#111827' } },
-            sepia: { body: { color: '#5f4b32', background: '#f6e5cb' } },
-            'eye-care': { body: { color: '#333', background: '#cce8cf' } },
-        };
-
-        rendition.themes.register('light', themeColors.light);
-        rendition.themes.register('dark', themeColors.dark);
-        rendition.themes.register('sepia', themeColors.sepia);
-        rendition.themes.register('eye-care', themeColors['eye-care']);
+        // Register themes
+        Object.keys(KINDLE_THEMES).forEach(themeName => {
+            rendition.themes.register(themeName, KINDLE_THEMES[themeName].body);
+        });
 
         rendition.themes.select(theme);
         rendition.themes.fontSize(`${fontSize}%`);
         rendition.themes.font(fontFamily);
+
+        // Apply line height and margins
+        const marginMap = { small: '1rem', medium: '2rem', large: '3rem' };
+        rendition.themes.override('line-height', lineHeight || 1.6);
+        rendition.themes.override('padding', `2rem ${marginMap[margins] || '2rem'}`);
     };
 
     const loadBook = async () => {
@@ -125,7 +156,6 @@ const Reader = () => {
 
             // Generate Locations
             book.ready.then(() => {
-                // Generates CFI for every 1000 characters (approx 1 page)
                 return book.locations.generate(1000);
             }).then(() => {
                 setIsLocationsReady(true);
@@ -151,18 +181,11 @@ const Reader = () => {
                     }
 
                     // Update Chapter Title
-                    // Try to find matching TOC item
                     const href = currentLocation.start.href;
-                    // Simple search in TOC (needs flattening if nested, but simplistic for now)
-                    // We search for the item whose href is contained in current href
-                    // or whose href *is* the current href
-
-                    // Simple flatten for search
                     const flatten = (list) => list.reduce(
                         (a, b) => a.concat(b.subitems ? flatten(b.subitems).concat(b) : b), []
                     );
                     const flatToc = flatten(navigation.toc);
-
                     const chapter = flatToc.find(item => href.indexOf(item.href.split('#')[0]) !== -1);
                     if (chapter) setChapterTitle(chapter.label);
                 }
@@ -173,35 +196,9 @@ const Reader = () => {
                 updateProgress();
             });
 
-            // Click / Tap Handler
+            // Kindle-style Click/Tap Handler
             rendition.on('click', (e) => {
-                const width = window.innerWidth;
-                const x = e.clientX;
-                const y = e.clientY;
-                const height = window.innerHeight;
-
-                // If controls are open, tapping CONTENT hides them
-                if (showControlsRef.current) {
-                    setShowControls(false);
-                    return;
-                }
-
-                // Interaction Zones (Simple & Strict)
-                // Left 30% -> Prev
-                if (x < width * 0.3) {
-                    rendition.prev();
-                    return;
-                }
-
-                // Right 30% OR Bottom 20% -> Next
-                if (x > width * 0.7 || y > height * 0.8) {
-                    rendition.next();
-                    return;
-                }
-
-                // Center -> Toggle Controls
-                // If we are here, we are in the middle 40% width and top 80% height
-                setShowControls(true);
+                handleTap(e);
             });
 
         } catch (err) {
@@ -211,17 +208,52 @@ const Reader = () => {
         }
     };
 
+    // Kindle-style tap zones
+    const handleTap = (e) => {
+        const width = window.innerWidth;
+        const x = e.clientX;
+        const y = e.clientY;
+        const height = window.innerHeight;
+
+        // If controls are showing, any tap on content hides them
+        if (showControlsRef.current) {
+            setShowControls(false);
+            return;
+        }
+
+        // Top 15% (in center zone) always shows controls (like Kindle's top tap)
+        if (y < height * 0.15 && x > width * 0.3 && x < width * 0.7) {
+            setShowControls(true);
+            return;
+        }
+
+        // Left 30% zone -> Previous page
+        if (x < width * 0.3) {
+            renditionRef.current?.prev();
+            return;
+        }
+
+        // Right 30% zone OR Bottom 20% -> Next page
+        if (x > width * 0.7 || y > height * 0.8) {
+            renditionRef.current?.next();
+            return;
+        }
+
+        // Center zone (30-70% width, not top 15%, not bottom 20%) -> Toggle controls
+        setShowControls(true);
+    };
+
     const prevPage = () => renditionRef.current?.prev();
     const nextPage = () => renditionRef.current?.next();
 
-    // Swipe handler (useGesture on container div)
+    // Swipe handler
     const bind = useGesture({
         onDragEnd: ({ movement: [mx], velocity: [vx] }) => {
-            // Swipe Right (Positive MX) -> Prev Page
+            // Swipe Right -> Prev Page
             if (mx > 50 && vx > 0.1) {
                 prevPage();
             }
-            // Swipe Left (Negative MX) -> Next Page
+            // Swipe Left -> Next Page
             if (mx < -50 && vx > 0.1) {
                 nextPage();
             }
@@ -232,78 +264,198 @@ const Reader = () => {
 
     if (error) return <div className="p-10 text-center text-red-500">Error: {error}</div>;
 
-    const bgClass = theme === 'dark' ? 'bg-slate-900' : theme === 'sepia' ? 'bg-[#F6E5CB]' : theme === 'eye-care' ? 'bg-[#cce8cf]' : 'bg-white';
-    const textClass = theme === 'dark' ? 'text-gray-300' : theme === 'sepia' ? 'text-[#5F4B32]' : theme === 'eye-care' ? 'text-[#333]' : 'text-gray-800';
+    const currentTheme = KINDLE_THEMES[theme] || KINDLE_THEMES.light;
 
     return (
-        <div className={clsx("relative w-full h-dvh overflow-hidden flex flex-col", bgClass)} {...bind()}>
-            {/* Header Overlay */}
+        <div className={clsx("relative w-full h-dvh overflow-hidden flex flex-col", currentTheme.bg)} {...bind()}>
+            {/* Header Overlay - Kindle Style */}
             <header className={clsx(
-                "fixed top-0 left-0 right-0 z-50 transition-transform duration-300 p-4 flex justify-between items-center bg-white/95 dark:bg-gray-900/95 backdrop-blur shadow-sm",
+                "fixed top-0 left-0 right-0 z-50 transition-transform duration-300",
                 showControls ? "translate-y-0" : "-translate-y-full"
             )}>
-                <div className="flex items-center gap-4">
-                    <button onClick={() => navigate('/library')} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
-                        <ArrowLeft size={24} />
+                <div className={clsx(
+                    "px-4 py-3 flex justify-between items-center backdrop-blur-sm border-b",
+                    currentTheme.controlBg, currentTheme.border
+                )}>
+                    <button
+                        onClick={() => navigate('/library')}
+                        className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors", currentTheme.text)}
+                    >
+                        <ArrowLeft size={22} />
                     </button>
-                    <button onClick={() => setShowToc(!showToc)} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
-                        <List size={24} />
-                    </button>
-                </div>
 
-                <h2 className={clsx("font-semibold truncate max-w-[50%] text-sm", textClass)}>{bookTitle || 'Reader'}</h2>
+                    <h2 className={clsx("font-medium truncate max-w-[50%] text-sm", currentTheme.text)}>
+                        {bookTitle || 'Reader'}
+                    </h2>
 
-                <div className="flex items-center gap-2">
-                    <button onClick={toggleFullscreen} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hidden sm:block", textClass)}>
-                        {isFullscreen ? <Minimize size={24} /> : <Maximize size={24} />}
-                    </button>
-                    <div className="relative">
-                        <button onClick={() => setShowSettings(!showSettings)} className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10", textClass)}>
-                            <Settings size={24} />
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={() => setShowToc(!showToc)}
+                            className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors", currentTheme.text)}
+                        >
+                            <List size={22} />
                         </button>
-                        {/* Settings Dropdown */}
-                        {showSettings && (
-                            <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 p-4 z-50 text-gray-900 dark:text-gray-100">
-                                <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Theme</h3>
-                                <div className="flex gap-2 mb-4">
-                                    <button onClick={() => setTheme('light')} className={clsx("flex-1 py-1 rounded border", theme === 'light' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Light</button>
-                                    <button onClick={() => setTheme('sepia')} className={clsx("flex-1 py-1 rounded border bg-[#f6e5cb] text-[#5f4b32]", theme === 'sepia' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Sepia</button>
-                                    <button onClick={() => setTheme('dark')} className={clsx("flex-1 py-1 rounded border bg-gray-900 text-gray-100", theme === 'dark' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Dark</button>
-                                    <button onClick={() => setTheme('eye-care')} className={clsx("flex-1 py-1 rounded border bg-[#cce8cf] text-[#333]", theme === 'eye-care' ? "border-indigo-500 ring-1" : "border-gray-300 dark:border-gray-600")}>Green</button>
+                        <button
+                            onClick={toggleFullscreen}
+                            className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hidden sm:block transition-colors", currentTheme.text)}
+                        >
+                            {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
+                        </button>
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowSettings(!showSettings)}
+                                className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors", currentTheme.text)}
+                            >
+                                <Settings size={22} />
+                            </button>
+                            {/* Settings Dropdown */}
+                            {showSettings && (
+                                <div className={clsx(
+                                    "absolute right-0 top-full mt-2 w-72 rounded-xl shadow-2xl border p-5 z-50",
+                                    theme === 'dark' ? 'bg-gray-800 text-gray-100 border-gray-700' : 'bg-white text-gray-900 border-gray-200'
+                                )}>
+                                    <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Theme</h3>
+                                    <div className="grid grid-cols-2 gap-2 mb-5">
+                                        <button
+                                            onClick={() => setTheme('light')}
+                                            className={clsx(
+                                                "py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium bg-white text-gray-900",
+                                                theme === 'light' ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-300 hover:border-gray-400"
+                                            )}
+                                        >
+                                            Light
+                                        </button>
+                                        <button
+                                            onClick={() => setTheme('sepia')}
+                                            className={clsx(
+                                                "py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium bg-[#F4E8D8] text-[#5B4636]",
+                                                theme === 'sepia' ? "border-blue-500 ring-2 ring-blue-200" : "border-[#D4C8B8] hover:border-[#C4B8A8]"
+                                            )}
+                                        >
+                                            Sepia
+                                        </button>
+                                        <button
+                                            onClick={() => setTheme('dark')}
+                                            className={clsx(
+                                                "py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium bg-[#1A1A1A] text-gray-300",
+                                                theme === 'dark' ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-700 hover:border-gray-600"
+                                            )}
+                                        >
+                                            Dark
+                                        </button>
+                                        <button
+                                            onClick={() => setTheme('eye-care')}
+                                            className={clsx(
+                                                "py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium bg-[#E0F0E3] text-gray-800",
+                                                theme === 'eye-care' ? "border-blue-500 ring-2 ring-blue-200" : "border-[#C0D0C3] hover:border-[#B0C0B3]"
+                                            )}
+                                        >
+                                            Eye Care
+                                        </button>
+                                    </div>
+
+                                    <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Font Size</h3>
+                                    <div className="mb-5 flex items-center gap-3">
+                                        <button
+                                            onClick={() => setFontSize(Math.max(50, fontSize - 10))}
+                                            className="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium"
+                                        >
+                                            A-
+                                        </button>
+                                        <span className="flex-1 text-center text-sm font-medium">{fontSize}%</span>
+                                        <button
+                                            onClick={() => setFontSize(Math.min(300, fontSize + 10))}
+                                            className="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium"
+                                        >
+                                            A+
+                                        </button>
+                                    </div>
+
+                                    <h3 className="font-semibold mb-2 text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Font Family</h3>
+                                    <select
+                                        value={fontFamily}
+                                        onChange={(e) => setFontFamily(e.target.value)}
+                                        className="w-full p-2.5 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 mb-5 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="Georgia">Georgia (Serif)</option>
+                                        <option value="Times New Roman">Times New Roman</option>
+                                        <option value="Inter">Inter (Sans)</option>
+                                        <option value="Arial">Arial</option>
+                                    </select>
+
+                                    <h3 className="font-semibold mb-2 text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Line Height</h3>
+                                    <div className="flex gap-2 mb-5">
+                                        <button
+                                            onClick={() => setLineHeight(1.4)}
+                                            className={clsx("flex-1 py-2 rounded-lg border text-sm", lineHeight === 1.4 ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-300 dark:border-gray-600")}
+                                        >
+                                            Tight
+                                        </button>
+                                        <button
+                                            onClick={() => setLineHeight(1.6)}
+                                            className={clsx("flex-1 py-2 rounded-lg border text-sm", lineHeight === 1.6 ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-300 dark:border-gray-600")}
+                                        >
+                                            Normal
+                                        </button>
+                                        <button
+                                            onClick={() => setLineHeight(1.8)}
+                                            className={clsx("flex-1 py-2 rounded-lg border text-sm", lineHeight === 1.8 ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-300 dark:border-gray-600")}
+                                        >
+                                            Loose
+                                        </button>
+                                    </div>
+
+                                    <h3 className="font-semibold mb-2 text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">Margins</h3>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => setMargins('small')}
+                                            className={clsx("flex-1 py-2 rounded-lg border text-sm", margins === 'small' ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-300 dark:border-gray-600")}
+                                        >
+                                            Small
+                                        </button>
+                                        <button
+                                            onClick={() => setMargins('medium')}
+                                            className={clsx("flex-1 py-2 rounded-lg border text-sm", margins === 'medium' ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-300 dark:border-gray-600")}
+                                        >
+                                            Medium
+                                        </button>
+                                        <button
+                                            onClick={() => setMargins('large')}
+                                            className={clsx("flex-1 py-2 rounded-lg border text-sm", margins === 'large' ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-300 dark:border-gray-600")}
+                                        >
+                                            Large
+                                        </button>
+                                    </div>
                                 </div>
-                                <h3 className="font-semibold mb-3 text-xs uppercase tracking-wider text-gray-500">Typography</h3>
-                                <div className="mb-4 flex items-center gap-2">
-                                    <button onClick={() => setFontSize(Math.max(50, fontSize - 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A-</button>
-                                    <span className="flex-1 text-center text-sm">{fontSize}%</span>
-                                    <button onClick={() => setFontSize(Math.min(300, fontSize + 10))} className="p-1 bg-gray-100 dark:bg-gray-700 rounded">A+</button>
-                                </div>
-                                <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value)} className="w-full p-2 text-sm rounded border border-gray-300 dark:border-gray-600 bg-transparent">
-                                    <option value="Georgia">Georgia (Serif)</option>
-                                    <option value="Times New Roman">Times New Roman</option>
-                                    <option value="Inter">Inter (Sans)</option>
-                                    <option value="Arial">Arial</option>
-                                </select>
-                            </div>
-                        )}
+                            )}
+                        </div>
                     </div>
                 </div>
             </header>
 
-            {/* TOC Drawer */}
+            {/* TOC Drawer - Kindle Style */}
             {showToc && (
                 <div className="fixed inset-0 z-50 flex">
-                    <div className="absolute inset-0 bg-black/50" onClick={() => setShowToc(false)} />
-                    <div className="relative w-3/4 max-w-xs bg-white dark:bg-gray-800 h-full overflow-y-auto p-4 shadow-xl">
-                        <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">Table of Contents</h3>
-                        <div className="space-y-2">
+                    <div className="absolute inset-0 bg-black/60" onClick={() => setShowToc(false)} />
+                    <div className={clsx(
+                        "relative w-80 max-w-[85%] h-full overflow-y-auto shadow-2xl animate-slide-in-left",
+                        theme === 'dark' ? 'bg-gray-800' : 'bg-white'
+                    )}>
+                        <div className="sticky top-0 bg-inherit border-b border-gray-200 dark:border-gray-700 p-4">
+                            <h3 className="font-bold text-lg text-gray-900 dark:text-white">Contents</h3>
+                        </div>
+                        <div className="p-2">
                             {toc.map((item, idx) => {
                                 const isActive = currentCfi && item.href && currentCfi.includes(item.href.split('#')[0]);
                                 return (
                                     <button
                                         key={idx}
                                         onClick={() => { renditionRef.current.display(item.href); setShowToc(false); }}
-                                        className={clsx("block w-full text-left p-2 rounded text-sm truncate",
-                                            isActive ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-medium" : "hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+                                        className={clsx(
+                                            "block w-full text-left px-4 py-3 rounded-lg text-sm transition-colors mb-1",
+                                            isActive
+                                                ? "bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium"
+                                                : "hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
                                         )}
                                     >
                                         {item.label}
@@ -316,22 +468,30 @@ const Reader = () => {
             )}
 
             {/* Viewer */}
-            <div className="flex-1 w-full h-full z-0 px-2 sm:px-8 pt-10 pb-12" ref={viewerRef} />
+            <div className="flex-1 w-full h-full z-0" ref={viewerRef} />
 
-            {/* Persistent Footer Info */}
-            <div className={clsx("absolute bottom-0 left-0 right-0 h-8 px-4 flex justify-between items-center text-[11px] opacity-60 bg-transparent z-40 select-none pointer-events-none font-medium", textClass)}>
-                <span className="truncate max-w-[70%]">{chapterTitle || bookTitle || 'Loading...'}</span>
-                <span>{isLocationsReady ? `${progress}%` : 'Calculating...'}</span>
+            {/* Persistent Footer Info - Kindle Style */}
+            <div className={clsx(
+                "absolute bottom-0 left-0 right-0 h-7 px-4 flex justify-between items-center text-[10px] opacity-50 bg-transparent z-40 select-none pointer-events-none font-medium",
+                currentTheme.text
+            )}>
+                <span className="truncate max-w-[65%]">{chapterTitle || bookTitle || 'Loading...'}</span>
+                <span>{isLocationsReady ? `${progress}%` : '...'}</span>
             </div>
 
-            {/* Footer Overlay */}
+            {/* Footer Overlay - Kindle Style */}
             <footer className={clsx(
-                "fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 flex flex-col bg-white/95 dark:bg-gray-900/95 backdrop-blur shadow-[0_-1px_10px_rgba(0,0,0,0.1)] pb-4",
+                "fixed bottom-0 left-0 right-0 z-50 transition-transform duration-300 flex flex-col backdrop-blur-sm border-t shadow-[0_-2px_10px_rgba(0,0,0,0.1)]",
+                currentTheme.controlBg, currentTheme.border,
                 showControls ? "translate-y-0" : "translate-y-full"
             )}>
-                <div className="px-6 pt-4 pb-2">
+                {/* Progress Slider */}
+                <div className="px-6 pt-4 pb-3">
                     <input
-                        type="range" min="0" max="100" value={progress}
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={progress}
                         disabled={!isLocationsReady}
                         onChange={(e) => {
                             const val = e.target.value;
@@ -341,23 +501,42 @@ const Reader = () => {
                                 renditionRef.current.display(cfi);
                             }
                         }}
-                        className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-indigo-600 disabled:opacity-50"
+                        className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full appearance-none cursor-pointer accent-blue-600 disabled:opacity-50"
                     />
                 </div>
 
-                <div className={clsx("flex justify-between items-center px-6 py-2", textClass)}>
-                    <button onClick={prevPage} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><ChevronLeft size={28} /></button>
-                    <button onClick={() => setShowSettings(!showSettings)} className="flex flex-col items-center gap-1 group">
-                        <span className="font-serif text-lg leading-none">Aa</span>
-                        <span className="text-[10px] uppercase font-bold text-gray-400 group-hover:text-indigo-500">Text</span>
+                {/* Navigation Controls */}
+                <div className={clsx("flex justify-center items-center gap-8 px-6 py-3", currentTheme.text)}>
+                    <button
+                        onClick={prevPage}
+                        className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                    >
+                        <ChevronLeft size={28} strokeWidth={2} />
                     </button>
-                    <button onClick={nextPage} className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10"><ChevronRight size={28} /></button>
+
+                    <button
+                        onClick={() => setShowSettings(!showSettings)}
+                        className="flex flex-col items-center gap-0.5 group px-4 py-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                    >
+                        <Type size={24} strokeWidth={2} />
+                        <span className="text-[9px] uppercase font-bold tracking-wider opacity-60 group-hover:opacity-100">Text</span>
+                    </button>
+
+                    <button
+                        onClick={nextPage}
+                        className="p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                    >
+                        <ChevronRight size={28} strokeWidth={2} />
+                    </button>
                 </div>
             </footer>
 
             {loading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white z-50">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div>
+                <div className="absolute inset-0 flex items-center justify-center bg-white dark:bg-gray-900 z-50">
+                    <div className="flex flex-col items-center gap-3">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                        <p className="text-sm text-gray-500">Loading book...</p>
+                    </div>
                 </div>
             )}
         </div>
