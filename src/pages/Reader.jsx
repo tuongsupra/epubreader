@@ -62,6 +62,7 @@ const Reader = () => {
     // Metadata State
     const [bookTitle, setBookTitle] = useState('');
     const [chapterTitle, setChapterTitle] = useState('');
+    const [currentHref, setCurrentHref] = useState(''); // Track current location href
     const [progress, setProgress] = useState(0);
     const [currentCfi, setCurrentCfi] = useState('');
     const [isLocationsReady, setIsLocationsReady] = useState(false);
@@ -162,12 +163,15 @@ const Reader = () => {
                 updateProgress();
             });
 
-            // Helper to update progress & chapter title
+            // Helper to update progress & chapter title FIXED
             const updateProgress = () => {
                 const currentLocation = rendition.currentLocation();
                 if (currentLocation && currentLocation.start) {
                     const cfi = currentLocation.start.cfi;
+                    const href = currentLocation.start.href;
+
                     setCurrentCfi(cfi);
+                    setCurrentHref(href); // Store current href for TOC highlighting
 
                     // Update Percentage
                     if (book.locations.length() > 0) {
@@ -180,14 +184,27 @@ const Reader = () => {
                         }
                     }
 
-                    // Update Chapter Title
-                    const href = currentLocation.start.href;
+                    // Update Chapter Title - FIXED: Find the LAST matching chapter, not the first
                     const flatten = (list) => list.reduce(
                         (a, b) => a.concat(b.subitems ? flatten(b.subitems).concat(b) : b), []
                     );
                     const flatToc = flatten(navigation.toc);
-                    const chapter = flatToc.find(item => href.indexOf(item.href.split('#')[0]) !== -1);
-                    if (chapter) setChapterTitle(chapter.label);
+
+                    // Find all chapters that match or are before the current position
+                    const hrefPath = href.split('#')[0]; // Get just the file path
+                    let currentChapter = null;
+
+                    for (let i = flatToc.length - 1; i >= 0; i--) {
+                        const itemHref = flatToc[i].href.split('#')[0];
+                        if (hrefPath.includes(itemHref) || itemHref === hrefPath) {
+                            currentChapter = flatToc[i];
+                            break;
+                        }
+                    }
+
+                    if (currentChapter) {
+                        setChapterTitle(currentChapter.label);
+                    }
                 }
             };
 
@@ -196,10 +213,8 @@ const Reader = () => {
                 updateProgress();
             });
 
-            // Kindle-style Click/Tap Handler
-            rendition.on('click', (e) => {
-                handleTap(e);
-            });
+            // DO NOT use rendition.on('click') - it doesn't work reliably with tap zones
+            // Tap zones are handled by overlay divs instead
 
         } catch (err) {
             console.error(err);
@@ -208,56 +223,33 @@ const Reader = () => {
         }
     };
 
-    // Improved Kindle-style tap zones - FIXED
-    const handleTap = (e) => {
-        const width = window.innerWidth;
-        const x = e.clientX;
-        const y = e.clientY;
-        const height = window.innerHeight;
+    const prevPage = () => renditionRef.current?.prev();
+    const nextPage = () => renditionRef.current?.next();
 
-        // If controls are showing, any tap on content hides them
+    // Tap zone handlers
+    const handleLeftTap = () => {
         if (showControlsRef.current) {
             setShowControls(false);
-            return;
-        }
-
-        // Define larger center zone (25%-75% width, 20%-80% height) for showing controls
-        const inCenterWidth = x > width * 0.25 && x < width * 0.75;
-        const inCenterHeight = y > height * 0.2 && y < height * 0.8;
-
-        // Center zone -> Toggle Controls (larger zone, easier to tap)
-        if (inCenterWidth && inCenterHeight) {
-            setShowControls(true);
-            return;
-        }
-
-        // Left edge (0-25%) -> Previous page
-        if (x < width * 0.25) {
-            renditionRef.current?.prev();
-            return;
-        }
-
-        // Right edge (75%-100%) -> Next page
-        if (x > width * 0.75) {
-            renditionRef.current?.next();
-            return;
-        }
-
-        // Top edge (0-20%) -> Show controls
-        if (y < height * 0.2) {
-            setShowControls(true);
-            return;
-        }
-
-        // Bottom edge (80%-100%) -> Next page
-        if (y > height * 0.8) {
-            renditionRef.current?.next();
-            return;
+        } else {
+            prevPage();
         }
     };
 
-    const prevPage = () => renditionRef.current?.prev();
-    const nextPage = () => renditionRef.current?.next();
+    const handleRightTap = () => {
+        if (showControlsRef.current) {
+            setShowControls(false);
+        } else {
+            nextPage();
+        }
+    };
+
+    const handleCenterTap = () => {
+        if (showControlsRef.current) {
+            setShowControls(false);
+        } else {
+            setShowControls(true);
+        }
+    };
 
     // Swipe handler
     const bind = useGesture({
@@ -447,7 +439,7 @@ const Reader = () => {
                 </div>
             </header>
 
-            {/* TOC Drawer - Kindle Style */}
+            {/* TOC Drawer - Kindle Style - FIXED HIGHLIGHTING */}
             {showToc && (
                 <div className="fixed inset-0 z-50 flex">
                     <div className="absolute inset-0 bg-black/60" onClick={() => setShowToc(false)} />
@@ -460,7 +452,11 @@ const Reader = () => {
                         </div>
                         <div className="p-2">
                             {toc.map((item, idx) => {
-                                const isActive = currentCfi && item.href && currentCfi.includes(item.href.split('#')[0]);
+                                // FIXED: Compare href paths correctly
+                                const itemHrefPath = item.href.split('#')[0];
+                                const currentHrefPath = currentHref.split('#')[0];
+                                const isActive = currentHrefPath.includes(itemHrefPath) || itemHrefPath === currentHrefPath;
+
                                 return (
                                     <button
                                         key={idx}
@@ -482,7 +478,33 @@ const Reader = () => {
             )}
 
             {/* Viewer */}
-            <div className="flex-1 w-full h-full z-0" ref={viewerRef} />
+            <div className="flex-1 w-full h-full z-0 relative" ref={viewerRef}>
+                {/* INVISIBLE TAP ZONE OVERLAYS - FIXED NAVIGATION */}
+                {!showToc && !showSettings && (
+                    <>
+                        {/* Left Tap Zone (0-25%) - Previous Page */}
+                        <div
+                            onClick={handleLeftTap}
+                            className="absolute left-0 top-0 bottom-0 w-[25%] z-10 cursor-pointer"
+                            style={{ background: 'transparent' }}
+                        />
+
+                        {/* Right Tap Zone (75-100%) - Next Page */}
+                        <div
+                            onClick={handleRightTap}
+                            className="absolute right-0 top-0 bottom-0 w-[25%] z-10 cursor-pointer"
+                            style={{ background: 'transparent' }}
+                        />
+
+                        {/* Center Tap Zone (25-75% width, 20-80% height) - Toggle Controls */}
+                        <div
+                            onClick={handleCenterTap}
+                            className="absolute left-[25%] right-[25%] top-[20%] bottom-[20%] z-10 cursor-pointer"
+                            style={{ background: 'transparent' }}
+                        />
+                    </>
+                )}
+            </div>
 
             {/* Persistent Footer Info - Kindle Style */}
             <div className={clsx(
