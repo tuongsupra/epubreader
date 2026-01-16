@@ -25,11 +25,11 @@ const KINDLE_THEMES = {
         border: 'border-[#D4C8B8]'
     },
     dark: {
-        body: { color: '#CCCCCC', background: '#1A1A1A' },
-        text: 'text-gray-300',
-        bg: 'bg-[#1A1A1A]',
-        controlBg: 'bg-[#1A1A1A]/98',
-        border: 'border-gray-700'
+        body: { color: '#E8E8E8', background: '#0F0F0F' },
+        text: 'text-gray-200',
+        bg: 'bg-[#0F0F0F]',
+        controlBg: 'bg-[#0F0F0F]/98',
+        border: 'border-gray-600'
     },
     'eye-care': {
         body: { color: '#1F2937', background: '#E0F0E3' },
@@ -208,7 +208,7 @@ const Reader = () => {
         }
     };
 
-    // Kindle-style tap zones
+    // Improved Kindle-style tap zones - FIXED
     const handleTap = (e) => {
         const width = window.innerWidth;
         const x = e.clientX;
@@ -221,26 +221,39 @@ const Reader = () => {
             return;
         }
 
-        // Top 15% (in center zone) always shows controls (like Kindle's top tap)
-        if (y < height * 0.15 && x > width * 0.3 && x < width * 0.7) {
+        // Define larger center zone (25%-75% width, 20%-80% height) for showing controls
+        const inCenterWidth = x > width * 0.25 && x < width * 0.75;
+        const inCenterHeight = y > height * 0.2 && y < height * 0.8;
+
+        // Center zone -> Toggle Controls (larger zone, easier to tap)
+        if (inCenterWidth && inCenterHeight) {
             setShowControls(true);
             return;
         }
 
-        // Left 30% zone -> Previous page
-        if (x < width * 0.3) {
+        // Left edge (0-25%) -> Previous page
+        if (x < width * 0.25) {
             renditionRef.current?.prev();
             return;
         }
 
-        // Right 30% zone OR Bottom 20% -> Next page
-        if (x > width * 0.7 || y > height * 0.8) {
+        // Right edge (75%-100%) -> Next page
+        if (x > width * 0.75) {
             renditionRef.current?.next();
             return;
         }
 
-        // Center zone (30-70% width, not top 15%, not bottom 20%) -> Toggle controls
-        setShowControls(true);
+        // Top edge (0-20%) -> Show controls
+        if (y < height * 0.2) {
+            setShowControls(true);
+            return;
+        }
+
+        // Bottom edge (80%-100%) -> Next page
+        if (y > height * 0.8) {
+            renditionRef.current?.next();
+            return;
+        }
     };
 
     const prevPage = () => renditionRef.current?.prev();
@@ -295,9 +308,10 @@ const Reader = () => {
                         >
                             <List size={22} />
                         </button>
+                        {/* Fullscreen button - NOW VISIBLE ON MOBILE */}
                         <button
                             onClick={toggleFullscreen}
-                            className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 hidden sm:block transition-colors", currentTheme.text)}
+                            className={clsx("p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 transition-colors", currentTheme.text)}
                         >
                             {isFullscreen ? <Minimize size={22} /> : <Maximize size={22} />}
                         </button>
@@ -337,7 +351,7 @@ const Reader = () => {
                                         <button
                                             onClick={() => setTheme('dark')}
                                             className={clsx(
-                                                "py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium bg-[#1A1A1A] text-gray-300",
+                                                "py-2 px-3 rounded-lg border-2 transition-all text-sm font-medium bg-[#0F0F0F] text-gray-200",
                                                 theme === 'dark' ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-700 hover:border-gray-600"
                                             )}
                                         >
